@@ -24,7 +24,7 @@ fn main() {
     }
 
     for selection in selections {
-        let operation = OperationType::from_selection(selection);
+        let mut operation = OperationType::from_selection(selection);
         if let Err(e) = operation.execute() {
             println!("Errore durante l'esecuzione dell'operazione: {}", e);
         }

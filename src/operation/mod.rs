@@ -10,7 +10,7 @@ pub enum OperationType {
 }
 
 impl OperationType {
-    pub(crate) fn execute(&self) -> io::Result<()> {
+    pub(crate) fn execute(&mut self) -> io::Result<()> {
         match self {
             OperationType::DeleteTempFiles(op) => op.execute(),
             OperationType::DeleteAppCache(op) => op.execute(),
@@ -20,108 +20,141 @@ impl OperationType {
 
     pub(crate) fn from_selection(selection: usize) -> Self {
         match selection {
-            0 => OperationType::DeleteTempFiles(DeleteTempFilesOp),
-            1 => OperationType::DeleteAppCache(DeleteAppCacheOp),
-            2 => OperationType::ClearBrowserCache(ClearBrowserCacheOp),
+            0 => OperationType::DeleteTempFiles(DeleteTempFilesOp {
+                files_count: 0,
+                bytes_count: 0,
+            }),
+            1 => OperationType::DeleteAppCache(DeleteAppCacheOp {
+                files_count: 0,
+                bytes_count: 0,
+            }),
+            2 => OperationType::ClearBrowserCache(ClearBrowserCacheOp {
+                files_count: 0,
+                bytes_count: 0,
+            }),
             _ => unreachable!(),
         }
     }
 }
 
 trait Operation {
-    fn execute(&self) -> io::Result<()>;
+    fn execute(&mut self) -> io::Result<()>;
+    fn display_files_count(&self);
+    fn display_bytes_count(&self);
 }
 
-pub(crate) struct DeleteTempFilesOp;
-pub(crate) struct DeleteAppCacheOp;
-pub(crate) struct ClearBrowserCacheOp;
+pub(crate) struct DeleteTempFilesOp {
+    files_count: usize,
+    bytes_count: usize,
+}
+pub(crate) struct DeleteAppCacheOp {
+    files_count: usize,
+    bytes_count: usize,
+}
+pub(crate) struct ClearBrowserCacheOp {
+    files_count: usize,
+    bytes_count: usize,
+}
 impl Operation for DeleteTempFilesOp {
-    fn execute(&self) -> io::Result<()> {
-        delete_temp_files()
+    fn execute(&mut self) -> io::Result<()> {
+
+        let temp_dir = "/tmp";  // Directory da cui cancellare i file
+
+        println!("Pulizia della directory: {}", temp_dir);
+
+        if Path::new(temp_dir).exists() {
+            for entry in fs::read_dir(temp_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                if path.is_file() {
+                    self.files_count += 1;
+                    self.bytes_count += fs::metadata(&path)?.len() as usize;
+                    if let Err(e) = fs::remove_file(&path) {
+                        if e.kind() != ErrorKind::PermissionDenied {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            println!("Done, {} files cancellati, {} Mb liberati.", self.files_count, self.bytes_count/1024/1024);
+        } else {
+            println!("La directory temporanea non esiste.");
+        }
+        Ok(())
+
+    }
+    fn display_files_count(&self) {
+        println!("File cancellati: {}", self.files_count);
+    }
+    fn display_bytes_count(&self) {
+        println!("MBytes liberati: {}", self.bytes_count/1024/1024);
     }
 }
 
 impl Operation for DeleteAppCacheOp {
-    fn execute(&self) -> io::Result<()> {
-        delete_app_cache()
+    fn execute(&mut self) -> io::Result<()> {
+        let cache_dir = if cfg!(target_os = "linux") {
+            format!("{}/.cache", env::var("HOME").unwrap())
+        } else if cfg!(target_os = "macos") {
+            format!("{}/Library/Caches", env::var("HOME").unwrap())
+        } else if cfg!(target_os = "windows") {
+            format!("C:\\Users\\{}\\AppData\\Local", env::var("USERNAME").unwrap())
+        } else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Sistema operativo non supportato"));
+        };
+
+        println!("Pulizia della cache nella directory: {}", cache_dir);
+
+        if Path::new(&cache_dir).exists() {
+            for entry in fs::read_dir(cache_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+
+                // Se è una directory, proviamo a rimuoverla
+                if path.is_dir() {
+                    if let Err(e) = fs::remove_dir_all(&path) {
+                        if e.kind() != ErrorKind::PermissionDenied {
+                            return Err(e);
+                        }
+                    } else {
+                        self.files_count += 1;
+                        self.bytes_count += fs::metadata(&path)?.len() as usize;
+                    }
+                } else if path.is_file() {
+                    if let Err(e) = fs::remove_file(&path) {
+                        if e.kind() != ErrorKind::PermissionDenied {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            println!("Pulizia della cache completata.");
+        } else {
+            println!("La directory della cache non esiste.");
+        }
+        Ok(())
+    }
+    fn display_files_count(&self) {
+        println!("File cancellati: {}", self.files_count);
+    }
+    fn display_bytes_count(&self) {
+        println!("MBytes liberati: {}", self.bytes_count/1024/1024);
     }
 }
 
 impl Operation for ClearBrowserCacheOp {
-    fn execute(&self) -> io::Result<()> {
+    fn execute(&mut self) -> io::Result<()> {
         clear_browser_cache()
     }
-}
-
-fn delete_temp_files() -> io::Result<()> {
-    let temp_dir = "/tmp";  // Directory da cui cancellare i file
-
-    println!("Pulizia della directory: {}", temp_dir);
-
-    if Path::new(temp_dir).exists() {
-        for entry in fs::read_dir(temp_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() {
-                // Cancelliamo solo i file, non le directory
-                println!("Cancellazione file: {:?}", path);
-                fs::remove_file(path)?;
-            }
-        }
-        println!("Cancellazione completata.");
-    } else {
-        println!("La directory temporanea non esiste.");
+    fn display_files_count(&self) {
+        println!("File cancellati: {}", self.files_count);
     }
-    Ok(())
-}
-
-fn delete_app_cache() -> io::Result<()> {
-    let cache_dir = if cfg!(target_os = "linux") {
-        format!("{}/.cache", env::var("HOME").unwrap())
-    } else if cfg!(target_os = "macos") {
-        format!("{}/Library/Caches", env::var("HOME").unwrap())
-    } else if cfg!(target_os = "windows") {
-        format!("C:\\Users\\{}\\AppData\\Local", env::var("USERNAME").unwrap())
-    } else {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "Sistema operativo non supportato"));
-    };
-
-    println!("Pulizia della cache nella directory: {}", cache_dir);
-
-    if Path::new(&cache_dir).exists() {
-        for entry in fs::read_dir(cache_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            // Se è una directory, proviamo a rimuoverla
-            if path.is_dir() {
-                println!("Cancellazione directory di cache: {:?}", path);
-                if let Err(e) = fs::remove_dir_all(&path) {
-                    if e.kind() == ErrorKind::PermissionDenied {
-                        println!("Permission denied per: {:?}, continuando...", path);
-                    } else {
-                        return Err(e);
-                    }
-                }
-            } else if path.is_file() {
-                // Se è un file, proviamo a rimuoverlo
-                println!("Cancellazione file di cache: {:?}", path);
-                if let Err(e) = fs::remove_file(&path) {
-                    if e.kind() == ErrorKind::PermissionDenied {
-                        println!("Permission denied per: {:?}, continuando...", path);
-                    } else {
-                        return Err(e);
-                    }
-                }
-            }
-        }
-        println!("Pulizia della cache completata.");
-    } else {
-        println!("La directory della cache non esiste.");
+    fn display_bytes_count(&self) {
+        println!("MBytes liberati: {}", self.bytes_count/1024/1024);
     }
-    Ok(())
 }
+
 
 // Funzione per cancellare la cache dei browser
 fn clear_browser_cache() -> io::Result<()> {
