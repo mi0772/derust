@@ -1,4 +1,5 @@
 mod operation;
+mod utils;
 
 use crate::operation::OperationType;
 use dialoguer::theme::ColorfulTheme;
@@ -25,8 +26,13 @@ fn main() {
 
     for selection in selections {
         let mut operation = OperationType::from_selection(selection);
-        if let Err(e) = operation.execute() {
-            println!("Errore durante l'esecuzione dell'operazione: {}", e);
+        match operation.execute() {
+            Ok(r) => {
+                println!("Operazione completata: {} file eliminati, {} megabyte liberati", r.file_count, r.total_size/1024/1024);
+            }
+            Err(e) => {
+                println!("Errore durante l'esecuzione dell'operazione: {}", e);
+            }
         }
     }
 }
